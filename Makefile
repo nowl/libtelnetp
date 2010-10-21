@@ -1,10 +1,11 @@
 CC = gcc
-CCFLAGS = -Wall -g -O2
+CCFLAGS = -Wall -g
 INCLUDES = 
 LDFLAGS =
 LIBS = 
 
-SRCS = telnetp.c
+SRCS = telnetp.c \
+	   utils.c
 
 OBJS = $(SRCS:.c=.o)
 
@@ -32,7 +33,7 @@ $(TEST): $(MAIN_A) test.o
 	$(CC) $(CCFLAGS) $(INCLUDES) -o $@ test.o -L. -ltelnetp
 
 clean:
-	rm -f *.o *~ $(MAIN)
+	rm -f *.o *~ $(MAIN_A) $(MAIN_SO) $(TEST)
 
 .depend: $(SRCS)
 	$(CC) -M $(CCFLAGS) $(INCLUDES) $^ > $@
