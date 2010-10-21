@@ -4,14 +4,16 @@ INCLUDES =
 LDFLAGS =
 LIBS = 
 
-SRCS = telnet.c
+SRCS = telnetp.c
 
 OBJS = $(SRCS:.c=.o)
 
-MAIN_SO = libtelnet.so
-MAIN_A = libtelnet.a
+MAIN_SO = libtelnetp.so
+MAIN_A = libtelnetp.a
+TEST = test
 
-ALL: $(MAIN_A) $(MAIN_SO)
+#ALL: $(MAIN_A) $(MAIN_SO) $(TEST)
+ALL: $(MAIN_A) $(TEST)
 
 .SUFFIXES: .c .o
 
@@ -25,6 +27,9 @@ $(MAIN_A): $(OBJS)
 
 $(MAIN_SO): $(OBJS)
 	$(CC) $(CCFLAGS) $(INCLUDES) -o $@ $(OBJS) $(LIBS) $(LDFLAGS) -fpic -shared
+
+$(TEST): $(MAIN_A) test.o
+	$(CC) $(CCFLAGS) $(INCLUDES) -o $@ test.o -L. -ltelnetp
 
 clean:
 	rm -f *.o *~ $(MAIN)
