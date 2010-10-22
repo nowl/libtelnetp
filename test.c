@@ -5,11 +5,10 @@
 int
 main(int argc, char *argv[])
 {
-    printf("testing\n");
-
     struct telnetp *tn = telnet_connect("oak", 23);
+    //struct telnetp *tn = telnet_connect("aardmud.org", 4000);
 
-    char *incoming;
+    unsigned char *incoming;
     int incoming_len;
 
     sleep(1);
