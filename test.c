@@ -7,11 +7,12 @@
 int
 main(int argc, char *argv[])
 {
-    struct telnetp *tn = telnetp_connect("oak", 23);
+    //struct telnetp *tn = telnetp_connect("oak", 23);
     //struct telnetp *tn = telnetp_connect("aardmud.org", 4000);
-    //struct telnetp *tn = telnetp_connect("realmsofdespair.com", 4000);
+    struct telnetp *tn = telnetp_connect("realmsofdespair.com", 4000);
 
-    //telnetp_enable_option(tn, TO_ECHO, true, NULL);
+    telnetp_enable_option(tn, TO_SUPRESS_GO_AHEAD, true);
+    telnetp_enable_option(tn, TO_COMPRESS2, true);
 
     unsigned char *incoming;
     int incoming_len;

@@ -11,6 +11,8 @@
 #include <string.h>
 #include <poll.h>
 
+#include <zlib.h>
+
 #include "telnetp.h"
 #include "utils.h"
 
@@ -19,7 +21,7 @@
 #ifdef _DEBUG
 # define LOG(...) { fprintf(stdout, "%s:%d -> ", __FILE__, __LINE__); fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n"); }
 #else
-# define LOG(...)
+# define LOG(...) {}
 #endif
 
 /* implementation of RFC 854 */
@@ -54,11 +56,12 @@
 #define WONT                  252
 #define DO                    253
 #define DONT                  254
-#define IAP                   255
+#define IAC                   255
 
 /* telnet options */
-#define ECHO                      1 /* RFC857 */
-#define SUPPRESS_GO_AHEAD         3 /* RFC858 */
+#define SUPPRESS_GO_AHEAD          3 /* RFC858 */
+#define COMPRESS                  85 /* MCCP */
+#define COMPRESS2                 86 /* MCCP */
 
 static struct {
     unsigned char command;
@@ -90,7 +93,7 @@ static struct {
     {WONT, "WONT"},
     {DO, "DO"},
     {DONT, "DONT"},
-    {IAP, "INTERPRET AS COMMAND"}
+    {IAC, "INTERPRET AS COMMAND"}
 };
 
 static int com_name_len = sizeof(com_name)/sizeof(com_name[0]);
@@ -113,6 +116,10 @@ struct telnetp
 
     /* the file descripter set used for poll */
     struct pollfd fd;
+
+    /* compression */
+    char mccp_compressed;
+    z_stream mccp_zstream;
 
     struct {
         /* incoming buffer */
@@ -139,10 +146,12 @@ struct telnetp
     /* configuration options */
     struct {
         char user_enabled;      /* whether the user wants it enabled */
-        void *callback;         /* the callback for special cases */
         int us, him;            /* our state and his state */
     } config[TO_NUM_OPTIONS];
 };
+
+static Bytef *zlib_buffer = NULL;
+static size_t zlib_buffer_c = 0;
 
 static void
 collect_incoming(struct telnetp *t)
@@ -164,10 +173,95 @@ collect_incoming(struct telnetp *t)
     {
         /* file descriptor should be open for reading - assume data is
          * available at this point */
-        ssize_t len = recv(t->tcp_socket, t->in.buffer, t->in.c, 0);
-        
-        t->in.i = len;
+        if(t->mccp_compressed)
+        {
+            /* compressed stream, first decompress, and then copy into
+             * in buffer */
+            ssize_t len = recv(t->tcp_socket, zlib_buffer, zlib_buffer_c, 0);
+
+            /* initialize zstream properties */
+            t->mccp_zstream.next_in = zlib_buffer;
+            t->mccp_zstream.avail_in = len;
+            t->mccp_zstream.next_out = t->in.buffer;
+            t->mccp_zstream.avail_out = t->in.c;
+            t->mccp_zstream.total_out = 0;
+
+            int ret2 = Z_OK;
+            do {
+                if(ret2 == Z_BUF_ERROR)
+                {
+                    t->in.buffer = memory_grow_to_size(t->in.buffer, &t->in.c, t->in.c * 2);
+                    t->mccp_zstream.next_in = zlib_buffer;
+                    t->mccp_zstream.avail_in = len;
+                    t->mccp_zstream.next_out = t->in.buffer;
+                    t->mccp_zstream.avail_out = t->in.c;
+                    t->mccp_zstream.total_out = 0;
+                }
+                ret2 = inflate(&t->mccp_zstream, Z_SYNC_FLUSH);
+            } while(ret2 == Z_BUF_ERROR);
+    
+            /* one final check */
+            if(ret2 != Z_OK) LOG("fatal error in input stream!!");
+            
+            t->in.i = t->mccp_zstream.total_out;
+        } else {
+            /* regular uncompressed stream */
+            ssize_t len = recv(t->tcp_socket, t->in.buffer, t->in.c, 0);
+            
+            t->in.i = len;
+        }
     }
+}
+
+void
+uncompress_remaining(struct telnetp *t)
+{
+    /* need to uncompress the remaining bytes in the incoming buffer
+     * then recopy them back into the buffer itself */
+
+    int remaining = t->in.i - t->in.p;
+
+    if(zlib_buffer_c == 0)
+    {
+        /* initialize buffer if needed */
+        zlib_buffer = malloc(sizeof(*zlib_buffer) * DEFAULT_INCOMING_BUFFER_SIZE);
+        zlib_buffer_c = DEFAULT_INCOMING_BUFFER_SIZE;                
+    }
+
+    memcpy(zlib_buffer, &t->in.buffer[t->in.p], remaining);
+
+    /* initialize zstream properties */
+    t->mccp_zstream.next_in = zlib_buffer;
+    t->mccp_zstream.avail_in = remaining;
+    t->mccp_zstream.next_out = t->in.buffer;
+    t->mccp_zstream.avail_out = t->in.c;
+    t->mccp_zstream.zalloc = Z_NULL;
+    t->mccp_zstream.zfree = Z_NULL;
+    t->mccp_zstream.opaque = Z_NULL;
+    t->mccp_zstream.total_out = 0;
+
+    int ret2 = inflateInit(&t->mccp_zstream);
+    if(ret2 != Z_OK) LOG("problem initializing inflate");
+            
+    ret2 = Z_OK;
+    do {
+        if(ret2 == Z_BUF_ERROR)
+        {
+            t->in.buffer = memory_grow_to_size(t->in.buffer, &t->in.c, t->in.c * 2);
+            t->mccp_zstream.next_in = zlib_buffer;
+            t->mccp_zstream.avail_in = remaining;
+            t->mccp_zstream.next_out = t->in.buffer;
+            t->mccp_zstream.avail_out = t->in.c;
+            t->mccp_zstream.total_out = 0;
+        }
+        ret2 = inflate(&t->mccp_zstream, Z_SYNC_FLUSH);
+    } while(ret2 == Z_BUF_ERROR);
+    
+    /* one final check */
+    if(ret2 != Z_OK) LOG("fatal error in input stream!!");
+    
+    t->in.i = t->mccp_zstream.total_out;
+    t->in.p = 0;
 }
 
 short
@@ -213,7 +307,8 @@ static int
 get_index_of_option(struct telnetp *t, unsigned char c)
 {
     switch(c) {
-    case ECHO: return TO_ECHO;
+    case COMPRESS: return TO_COMPRESS;
+    case COMPRESS2: return TO_COMPRESS2;
     case SUPPRESS_GO_AHEAD: return TO_SUPRESS_GO_AHEAD;
     default: return -1;
     }
@@ -222,7 +317,7 @@ get_index_of_option(struct telnetp *t, unsigned char c)
 static void
 send_response(struct telnetp *t, int type, unsigned char c)
 {
-    char resp[3] = {IAP, type, c};
+    char resp[3] = {IAC, type, c};
     telnetp_send_data(t, resp, 3);
 }
 
@@ -359,6 +454,92 @@ handle_dont(struct telnetp *t)
 }
 
 static int
+handle_subneg_begin(struct telnetp *t)
+{
+    int ret = get_next_byte(t);
+    if(ret == -1) return -1;
+    unsigned char c = ret;
+    LOG("recieved SUBNEGOTIATION BEGIN for: %d", c);
+    int ind = get_index_of_option(t, c);
+    if(ind == -1 || t->config[ind].user_enabled == false)
+    {
+        LOG("unknown option or option disabled: %d", c);
+        return -1;
+    }
+
+    switch(c)
+    {
+    case COMPRESS2:
+    {
+        /* look for IAC character */
+        ret = get_next_byte(t);
+        if(ret == -1) return -1;
+        c = ret;
+        if(c != IAC) {
+            LOG("invalid COMPRESS2 subnegotation sequence");
+            return -1;
+        }
+        /* look for SE character */
+        ret = get_next_byte(t);
+        if(ret == -1) return -1;
+        c = ret;
+        if(c != SE) {
+            LOG("invalid COMPRESS2 subnegotation sequence");
+            return -1;
+        }
+        /* at this point the rest of the stream from the server is
+         * compressed */
+        t->mccp_compressed = true;
+        uncompress_remaining(t);
+
+        /* TODO: currently not checking to disable COMPRESS  */
+
+        break;
+    }
+    case COMPRESS:
+    {
+        /* look for WILL character */
+        ret = get_next_byte(t);
+        if(ret == -1) return -1;
+        c = ret;
+        if(c != WILL) {
+            LOG("invalid COMPRESS subnegotation sequence");
+            return -1;
+        }
+        /* look for SE character */
+        ret = get_next_byte(t);
+        if(ret == -1) return -1;
+        c = ret;
+        if(c != SE) {
+            LOG("invalid COMPRESS subnegotation sequence");
+            return -1;
+        }
+        /* at this point the rest of the stream from the server is
+         * compressed */
+        t->mccp_compressed = true;
+        uncompress_remaining(t);
+        break;
+    }
+    default:
+        LOG("unknown subnegotiation option");
+        return -1;
+    }
+    
+    return 0;
+}
+
+static int
+handle_subneg_end(struct telnetp *t)
+{
+    int ret = get_next_byte(t);
+    if(ret == -1) return -1;
+    unsigned char c = ret;
+    LOG("recieved SUBNEGOTIATION END for: %d", c);
+
+    return 0;
+}
+
+static int
 process_option(struct telnetp *t)
 {
     short ret = get_next_byte(t);
@@ -367,8 +548,8 @@ process_option(struct telnetp *t)
     unsigned char c = ret;
     switch(c)
     {
-    case SE:
     case NOP:
+        break;
     case DM:
     case BRK:
     case IP:
@@ -377,10 +558,14 @@ process_option(struct telnetp *t)
     case EC:
     case EL:
     case GA:
-    case SB:
         /* TODO: work on these */
         break;
-     
+    case SE:
+        ret = handle_subneg_end(t);
+        break;
+    case SB:
+        ret = handle_subneg_begin(t);
+        break;
     case WILL:
         ret = handle_will(t);
         break;
@@ -434,7 +619,7 @@ process_char(struct telnetp *t, unsigned char c)
 
         LOG("recieved special printer character: %d (%s)", c, search_for_desc(c));
         break;
-    case IAP:
+    case IAC:
     {
         /* process telnet option */
         if( process_option(t) == -1 )
@@ -534,17 +719,17 @@ telnetp_connect(char *hostname, unsigned short port)
         t->config[i].him = O_NO;
     }
 
+    /* turn off compression by default */
+    t->mccp_compressed = false;
+
     return t;
 }
 
 void
-telnetp_enable_option(struct telnetp *t, unsigned int type, char enabled, void *callback)
+telnetp_enable_option(struct telnetp *t, unsigned int type, char enabled)
 {
     if(type < TO_NUM_OPTIONS)
-    {
         t->config[type].user_enabled = enabled;
-        t->config[type].callback = callback;
-    }
 }
 
 void
@@ -578,7 +763,7 @@ telnetp_send_data(struct telnetp *t, char *data, unsigned int len)
 }
 
 static char *out_buf = NULL;
-static int out_buf_c = 0;
+static size_t out_buf_c = 0;
 
 int
 telnetp_send_line(struct telnetp *t, char *data, unsigned int len)
