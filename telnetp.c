@@ -232,7 +232,7 @@ get_next_byte(struct telnetp *t)
     if(t->in.i != -1)
     {
         /* valid data to follow */
-        //LOG("next char = %d", t->in.buffer[t->in.p]);
+        LOG("next char = %d", t->in.buffer[t->in.p]);
         
         return t->in.buffer[t->in.p++];
     }
@@ -504,6 +504,11 @@ handle_subneg_end(struct telnetp *t)
     return 0;
 }
 
+#define CALLBACK_CALL(fn) {               \
+    if(t->callbacks && t->callbacks->fn)  \
+        t->callbacks->fn();               \
+    }
+
 static int
 process_option(struct telnetp *t)
 {
@@ -516,24 +521,30 @@ process_option(struct telnetp *t)
     case NOP:
         break;
     case DM:
+        CALLBACK_CALL(data_mark_fn);
+        break;
     case BRK:
+        CALLBACK_CALL(break_fn);
+        break;
     case IP:
-    case AO:
+        CALLBACK_CALL(interrupt_process_fn);
+        break;
+    case AO:  
+        CALLBACK_CALL(abort_output_fn);
+        break;
     case GA:
-        /* TODO: work on these */
+        CALLBACK_CALL(go_ahead_fn);
         break;
     case EC:
         /* erase character */
-        if(t->callbacks && t->callbacks->erase_char_fn)
-            t->callbacks->erase_char_fn();
+        CALLBACK_CALL(erase_char_fn);
         break;
     case EL:
         /* erase line */
-        if(t->callbacks && t->callbacks->erase_line_fn)
-            t->callbacks->erase_line_fn();
+        CALLBACK_CALL(erase_line_fn);
         break;
     case AYT:
-        /* XXX: doesn't seem clear to me what to do with this? */
+        CALLBACK_CALL(are_you_there_fn);
         break;
     case SE:
         ret = handle_subneg_end(t);
@@ -571,7 +582,7 @@ process_char(struct telnetp *t, unsigned char c)
     {
         /* if in the "printable" characters then send the ascii
          * character */
-        
+
         if(t->callbacks && t->callbacks->ascii_fn)
             t->callbacks->ascii_fn(c);
         return 0;
@@ -580,36 +591,28 @@ process_char(struct telnetp *t, unsigned char c)
     switch(c)
     {
     case NUL:
-        if(t->callbacks && t->callbacks->null_fn)
-            t->callbacks->null_fn();
+        CALLBACK_CALL(null_fn);
         break;
     case LF:
-        if(t->callbacks && t->callbacks->line_feed_fn)
-            t->callbacks->line_feed_fn();
+        CALLBACK_CALL(line_feed_fn);
         break;
     case CR:
-        if(t->callbacks && t->callbacks->carriage_return_fn)
-            t->callbacks->carriage_return_fn();
+        CALLBACK_CALL(carriage_return_fn);
         break;
     case BEL:
-        if(t->callbacks && t->callbacks->bell_fn)
-            t->callbacks->bell_fn();
+        CALLBACK_CALL(bell_fn);
         break;
     case BS:
-        if(t->callbacks && t->callbacks->backspace_fn)
-            t->callbacks->backspace_fn();
+        CALLBACK_CALL(backspace_fn);
         break;
     case HT:
-        if(t->callbacks && t->callbacks->horizontal_tab_fn)
-            t->callbacks->horizontal_tab_fn();
+        CALLBACK_CALL(horizontal_tab_fn);
         break;
     case VT:
-        if(t->callbacks && t->callbacks->vertical_tab_fn)
-            t->callbacks->vertical_tab_fn();
+        CALLBACK_CALL(vertical_tab_fn);
         break;
     case FF:
-        if(t->callbacks && t->callbacks->form_feed_fn)
-            t->callbacks->form_feed_fn();
+        CALLBACK_CALL(form_feed_fn);
         break;
     case IAC:
     {

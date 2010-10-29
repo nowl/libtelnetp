@@ -31,6 +31,12 @@ struct telnetp_cbs {
     /* other telnet specific callbacks */
     void (*erase_line_fn)(void);
     void (*erase_char_fn)(void);
+    void (*are_you_there_fn)(void);
+    void (*data_mark_fn)(void);
+    void (*abort_output_fn)(void);
+    void (*go_ahead_fn)(void);
+    void (*interrupt_process_fn)(void);
+    void (*break_fn)(void);
 };
 
 struct telnetp;
