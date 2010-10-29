@@ -59,55 +59,10 @@
 #define IAC                   255
 
 /* telnet options */
+#define ECHO                       1 /* RFC857 */
 #define SUPPRESS_GO_AHEAD          3 /* RFC858 */
 #define COMPRESS                  85 /* MCCP */
 #define COMPRESS2                 86 /* MCCP */
-
-static struct {
-    unsigned char command;
-    char *name;
-} com_name[] = {
-    /* printer */
-    {NUL, "NO OPERATION"},
-    {LF, "LINE FEED"},
-    {CR, "CARRIAGE RETURN"},
-    {BEL, "BELL"},
-    {BS, "BACK SPACE"},
-    {HT, "HORIZONTAL TAB"},
-    {VT, "VERTICAL TAB"},
-    {FF, "FORM FEED"},
-
-    /* commands */
-    {SE, "SUBNEGOTIATION END"},
-    {NOP, "NO OPERATION"},
-    {DM, "DATA MARK"},
-    {BRK, "BREAK"},
-    {IP, "INTERRUPT PROCESS"},
-    {AO, "ABORT OUTPUT"},
-    {AYT, "ARE YOU THERE"},
-    {EC, "ERASE CHARACTER"},
-    {EL, "ERASE LINE"},
-    {GA, "GO AHEAD"},
-    {SB, "SUBNEGOTIATION BEGIN"},
-    {WILL, "WILL"},
-    {WONT, "WONT"},
-    {DO, "DO"},
-    {DONT, "DONT"},
-    {IAC, "INTERPRET AS COMMAND"}
-};
-
-static int com_name_len = sizeof(com_name)/sizeof(com_name[0]);
-
-static char *
-search_for_desc(unsigned char com)
-{
-    int i;
-    for(i=0; i<com_name_len; i++)
-        if(com_name[i].command == com)
-            return com_name[i].name;
-
-    return "UNKNOWN";
-}
 
 struct telnetp
 {
@@ -116,6 +71,9 @@ struct telnetp
 
     /* the file descripter set used for poll */
     struct pollfd fd;
+
+    /* callbacks to client */
+    struct telnetp_cbs *callbacks;
 
     /* compression */
     char mccp_compressed;
@@ -130,14 +88,6 @@ struct telnetp
         int p;                  /* next byte to work with */
     } in;
 
-    struct {
-        /* incoming cleaned buffer */
-
-        unsigned char *buffer;
-        int i;
-        size_t c;
-    } inc;
-
 #define O_YES          1
 #define O_NO           2
 #define O_WANTYES      3
@@ -147,6 +97,8 @@ struct telnetp
     struct {
         char user_enabled;      /* whether the user wants it enabled */
         int us, him;            /* our state and his state */
+        void *data;             /* possible callback or other user
+                                 * data, command specific */
     } config[TO_NUM_OPTIONS];
 };
 
@@ -280,7 +232,7 @@ get_next_byte(struct telnetp *t)
     if(t->in.i != -1)
     {
         /* valid data to follow */
-        LOG("next char = %d", t->in.buffer[t->in.p]);
+        //LOG("next char = %d", t->in.buffer[t->in.p]);
         
         return t->in.buffer[t->in.p++];
     }
@@ -293,16 +245,6 @@ get_next_byte(struct telnetp *t)
     return 0;
 }
 
-static void
-add_to_cleaned_buffer(struct telnetp *t, unsigned char c)
-{
-    if(t->inc.i == t->inc.c)
-        t->inc.buffer = memory_grow_to_size(t->inc.buffer,
-                                            &t->inc.c,
-                                            t->inc.c * 2);
-    t->inc.buffer[t->inc.i++] = c;
-}
-
 static int
 get_index_of_option(struct telnetp *t, unsigned char c)
 {
@@ -310,6 +252,7 @@ get_index_of_option(struct telnetp *t, unsigned char c)
     case COMPRESS: return TO_COMPRESS;
     case COMPRESS2: return TO_COMPRESS2;
     case SUPPRESS_GO_AHEAD: return TO_SUPRESS_GO_AHEAD;
+    case ECHO: return TO_ECHO;
     default: return -1;
     }
 }
@@ -342,6 +285,17 @@ handle_will(struct telnetp *t)
             {
                 /* we agree to enable */
                 t->config[ind].him = O_YES;
+                
+                /* special cases */
+                switch(ind) {
+                case TO_ECHO:
+                {
+                    void (*cb)(int) = t->config[ind].data;
+                    cb(ET_SERVER_WILL_ECHO);
+                    break;
+                }
+                };
+
                 send_response(t, DO, c);
             } else {
                 /* we don't want this enabled */
@@ -408,6 +362,17 @@ handle_do(struct telnetp *t)
             {
                 /* we agree to enable */
                 t->config[ind].us = O_YES;
+
+                /* special cases */
+                switch(ind) {
+                case TO_ECHO:
+                {
+                    void (*cb)(int) = t->config[ind].data;
+                    cb(ET_SERVER_DO_ECHO);
+                    break;
+                }
+                };
+
                 send_response(t, WILL, c);
             } else {
                 /* we don't want this enabled */
@@ -554,11 +519,21 @@ process_option(struct telnetp *t)
     case BRK:
     case IP:
     case AO:
-    case AYT:
-    case EC:
-    case EL:
     case GA:
         /* TODO: work on these */
+        break;
+    case EC:
+        /* erase character */
+        if(t->callbacks && t->callbacks->erase_char_fn)
+            t->callbacks->erase_char_fn();
+        break;
+    case EL:
+        /* erase line */
+        if(t->callbacks && t->callbacks->erase_line_fn)
+            t->callbacks->erase_line_fn();
+        break;
+    case AYT:
+        /* XXX: doesn't seem clear to me what to do with this? */
         break;
     case SE:
         ret = handle_subneg_end(t);
@@ -594,30 +569,47 @@ process_char(struct telnetp *t, unsigned char c)
 {
     if(c >= 32 && c <= 126)
     {
-        /* if in the "printable" characters then add it to the cleaned
-         * buffer */
+        /* if in the "printable" characters then send the ascii
+         * character */
         
-        add_to_cleaned_buffer(t, c);
+        if(t->callbacks && t->callbacks->ascii_fn)
+            t->callbacks->ascii_fn(c);
         return 0;
     }
 
     switch(c)
     {
     case NUL:
+        if(t->callbacks && t->callbacks->null_fn)
+            t->callbacks->null_fn();
+        break;
     case LF:
+        if(t->callbacks && t->callbacks->line_feed_fn)
+            t->callbacks->line_feed_fn();
+        break;
     case CR:
+        if(t->callbacks && t->callbacks->carriage_return_fn)
+            t->callbacks->carriage_return_fn();
+        break;
     case BEL:
+        if(t->callbacks && t->callbacks->bell_fn)
+            t->callbacks->bell_fn();
+        break;
     case BS:
+        if(t->callbacks && t->callbacks->backspace_fn)
+            t->callbacks->backspace_fn();
+        break;
     case HT:
+        if(t->callbacks && t->callbacks->horizontal_tab_fn)
+            t->callbacks->horizontal_tab_fn();
+        break;
     case VT:
+        if(t->callbacks && t->callbacks->vertical_tab_fn)
+            t->callbacks->vertical_tab_fn();
+        break;
     case FF:
-        
-        /* if in the special printer characters then also add it to
-         * the cleaned buffer */
-
-        add_to_cleaned_buffer(t, c);
-
-        LOG("recieved special printer character: %d (%s)", c, search_for_desc(c));
+        if(t->callbacks && t->callbacks->form_feed_fn)
+            t->callbacks->form_feed_fn();
         break;
     case IAC:
     {
@@ -637,47 +629,36 @@ process_char(struct telnetp *t, unsigned char c)
     return 0;
 }
 
-static int
+static void
 process_buffer(struct telnetp *t)
 {
-    /* this should place telnet printer characters in the cleaned
-     * buffer and process other commands as needed */
-    
     while(t->in.p < t->in.i)
     {
         /* still data remaining to be processed in this cycle */
         
         short ret = get_next_byte(t);
-        if(ret == -1) return -1;
+        if(ret == -1) return;
         
         if( process_char(t, (unsigned char)ret) == -1 )
-            return -1;
+            return;
     }
-
-    return 0;
 }
 
-int
-telnetp_process_incoming(struct telnetp *t, unsigned char **buffer)
+void
+telnetp_process_incoming(struct telnetp *t)
 {
     /* *buffer will be filled with the most recent printer data from
      * the connection */
     collect_incoming(t);
 
-    /* reset cleaned incoming buffer */
-    t->inc.i = 0;
-
     /* process the incoming buffer */
-    if( process_buffer(t) == -1 )
-        t->inc.i = -1;
-
-    /* return data */
-    *buffer = t->inc.buffer;
-    return t->inc.i;
+    process_buffer(t);
 }
 
 struct telnetp *
-telnetp_connect(char *hostname, unsigned short port)
+telnetp_connect(char *hostname,
+                unsigned short port,
+                struct telnetp_cbs *cbs)
 {
     struct telnetp *t = malloc(sizeof(*t));
 
@@ -707,9 +688,6 @@ telnetp_connect(char *hostname, unsigned short port)
     /* set up buffers */
     t->in.c = t->in.i = t->in.p = 0;
     t->in.buffer = memory_grow_to_size(t->in.buffer, &t->in.c, DEFAULT_INCOMING_BUFFER_SIZE);
-    t->inc.c = t->inc.i = 0;
-    t->inc.buffer = memory_grow_to_size(t->inc.buffer, &t->inc.c, DEFAULT_INCOMING_BUFFER_SIZE);
-
 
     /* turn off all options to begin with */
     int i;
@@ -722,14 +700,20 @@ telnetp_connect(char *hostname, unsigned short port)
     /* turn off compression by default */
     t->mccp_compressed = false;
 
+    /* connect callbacks */
+    t->callbacks = cbs;
+
     return t;
 }
 
 void
-telnetp_enable_option(struct telnetp *t, unsigned int type, char enabled)
+telnetp_enable_option(struct telnetp *t, unsigned int type, char enabled, void *data)
 {
-    if(type < TO_NUM_OPTIONS)
+    if(type < TO_NUM_OPTIONS) 
+    {
         t->config[type].user_enabled = enabled;
+        t->config[type].data = data;
+    }
 }
 
 void
@@ -740,7 +724,6 @@ telnetp_close(struct telnetp *t)
         LOG("socket close problem: %d", errno);
 
     free(t->in.buffer);    
-    free(t->inc.buffer);    
     free(t);
 }
 
