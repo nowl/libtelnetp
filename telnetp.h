@@ -43,7 +43,7 @@ struct telnetp;
 
 struct telnetp *telnetp_connect(char *hostname,
                                 unsigned short port,
-                                struct telnetp_cbs *cbs);
+                                struct telnetp_cbs cbs);
 void telnetp_close(struct telnetp *t);
 
 void telnetp_enable_option(struct telnetp *t, unsigned int type, char enabled, void *data);

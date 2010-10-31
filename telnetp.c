@@ -73,7 +73,7 @@ struct telnetp
     struct pollfd fd;
 
     /* callbacks to client */
-    struct telnetp_cbs *callbacks;
+    struct telnetp_cbs callbacks;
 
     /* compression */
     char mccp_compressed;
@@ -220,16 +220,21 @@ short
 get_next_byte(struct telnetp *t)
 {
     /* This function should be called to retrieve the next available
-     * byte on the incoming socket. If no data is available then -1
-     * will be returned. */
-
+     * byte on the incoming socket. If no data is available or there
+     * is an error then -1 will be returned. */
+    
     if(t->in.i == t->in.p)
     {
         /* hit the end so grab more data from the socket */
         collect_incoming(t);
     }
 
-    if(t->in.i != -1)
+    if(t->in.i == 0)
+    {
+        /* no new data */
+        return -1;
+    }
+    else if(t->in.i != -1)
     {
         /* valid data to follow */
         LOG("next char = %d", t->in.buffer[t->in.p]);
@@ -242,7 +247,8 @@ get_next_byte(struct telnetp *t)
         return -1;
     }
 
-    return 0;
+    /* shouldn't make it here */
+    return -1;
 }
 
 static int
@@ -505,8 +511,8 @@ handle_subneg_end(struct telnetp *t)
 }
 
 #define CALLBACK_CALL(fn) {               \
-    if(t->callbacks && t->callbacks->fn)  \
-        t->callbacks->fn();               \
+        if(t->callbacks.fn)               \
+            t->callbacks.fn();            \
     }
 
 static int
@@ -583,8 +589,8 @@ process_char(struct telnetp *t, unsigned char c)
         /* if in the "printable" characters then send the ascii
          * character */
 
-        if(t->callbacks && t->callbacks->ascii_fn)
-            t->callbacks->ascii_fn(c);
+        if(t->callbacks.ascii_fn)
+            t->callbacks.ascii_fn(c);
         return 0;
     }
 
@@ -661,7 +667,7 @@ telnetp_process_incoming(struct telnetp *t)
 struct telnetp *
 telnetp_connect(char *hostname,
                 unsigned short port,
-                struct telnetp_cbs *cbs)
+                struct telnetp_cbs cbs)
 {
     struct telnetp *t = malloc(sizeof(*t));
 
