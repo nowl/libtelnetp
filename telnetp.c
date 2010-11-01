@@ -690,7 +690,7 @@ telnetp_connect(char *hostname,
     sockaddr.sin_port = htons(port);
     if( connect(t->tcp_socket, (struct sockaddr *)&sockaddr, sizeof(sockaddr)) == -1 ) {
         LOG("connect problem: %d", errno);
-        telnetp_close(t);
+        free(t);
         return NULL;
     }
 

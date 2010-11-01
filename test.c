@@ -85,9 +85,14 @@ main(int argc, char *argv[])
                               NULL,
                               NULL};
 
-    //struct telnetp *tn = telnetp_connect("oak", 23, &cbs);
-    struct telnetp *tn = telnetp_connect("aardmud.org", 4000, &cbs);
-    //struct telnetp *tn = telnetp_connect("realmsofdespair.com", 4000, &cbs);
+    //struct telnetp *tn = telnetp_connect("oak", 23, cbs);
+    struct telnetp *tn = telnetp_connect("aardmud.org", 4000, cbs);
+    //struct telnetp *tn = telnetp_connect("realmsofdespair.com", 4000, cbs);
+
+    if(!tn) {
+        printf("problem connecting\n");
+        return 1;
+    }
 
     telnetp_enable_option(tn, TO_ECHO, true, rec_echo_command);
     telnetp_enable_option(tn, TO_SUPRESS_GO_AHEAD, true, NULL);
