@@ -130,7 +130,7 @@ collect_incoming(struct telnetp *t)
             /* compressed stream, first decompress, and then copy into
              * in buffer */
             ssize_t len = recv(t->tcp_socket, zlib_buffer, zlib_buffer_c, 0);
-
+            
             /* initialize zstream properties */
             t->mccp_zstream.next_in = zlib_buffer;
             t->mccp_zstream.avail_in = len;
@@ -153,7 +153,7 @@ collect_incoming(struct telnetp *t)
             } while(ret2 == Z_BUF_ERROR);
     
             /* one final check */
-            if(ret2 != Z_OK) LOG("fatal error in input stream!!");
+            if(ret2 != Z_OK) LOG("fatal error in input stream!! got %d", ret2);
             
             t->in.i = t->mccp_zstream.total_out;
         } else {
@@ -180,8 +180,6 @@ uncompress_remaining(struct telnetp *t)
         zlib_buffer_c = DEFAULT_INCOMING_BUFFER_SIZE;                
     }
 
-    memcpy(zlib_buffer, &t->in.buffer[t->in.p], remaining);
-
     /* initialize zstream properties */
     t->mccp_zstream.next_in = zlib_buffer;
     t->mccp_zstream.avail_in = remaining;
@@ -194,7 +192,14 @@ uncompress_remaining(struct telnetp *t)
 
     int ret2 = inflateInit(&t->mccp_zstream);
     if(ret2 != Z_OK) LOG("problem initializing inflate");
+
+    if(remaining == 0) {
+        /* nothing to decompress */
+        return;
+    }
             
+    memcpy(zlib_buffer, &t->in.buffer[t->in.p], remaining);
+
     ret2 = Z_OK;
     do {
         if(ret2 == Z_BUF_ERROR)
