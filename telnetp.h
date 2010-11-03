@@ -16,34 +16,40 @@ enum echo_types
     ET_SERVER_DO_ECHO
 };
 
-struct telnetp_cbs {
-    /* printer callbacks */
-    void (*ascii_fn)(char);
-    void (*null_fn)(void);
-    void (*line_feed_fn)(void);
-    void (*carriage_return_fn)(void);
-    void (*bell_fn)(void);
-    void (*backspace_fn)(void);
-    void (*horizontal_tab_fn)(void);
-    void (*vertical_tab_fn)(void);
-    void (*form_feed_fn)(void);
+struct ascii_callback
+{
+    unsigned char c;
+};
 
-    /* other telnet specific callbacks */
-    void (*erase_line_fn)(void);
-    void (*erase_char_fn)(void);
-    void (*are_you_there_fn)(void);
-    void (*data_mark_fn)(void);
-    void (*abort_output_fn)(void);
-    void (*go_ahead_fn)(void);
-    void (*interrupt_process_fn)(void);
-    void (*break_fn)(void);
+enum telnet_callback_types
+{
+    /* printer callbacks */
+    TC_ASCII,
+    TC_NULL,
+    TC_LINE_FEED,
+    TC_CARRIAGE_RETURN,
+    TC_BELL,
+    TC_BACKSPACE,
+    TC_HORIZONTAL_TAB,
+    TC_VERTICAL_TAB,
+    TC_FORM_FEED,
+
+    /* other telnet specific callbacks */    
+    TC_ERASE_LINE,
+    TC_ERASE_CHAR,
+    TC_ARE_YOU_THERE,
+    TC_DATA_MARK,
+    TC_ABORT_OUTPUT,
+    TC_GO_AHEAD,
+    TC_INTERRUPT_PROCESS,
+    TC_BREAK
 };
 
 struct telnetp;
 
 struct telnetp *telnetp_connect(char *hostname,
                                 unsigned short port,
-                                struct telnetp_cbs cbs);
+                                void (*callback_func)(int, void *));
 void telnetp_close(struct telnetp *t);
 
 void telnetp_enable_option(struct telnetp *t, unsigned int type, char enabled, void *data);

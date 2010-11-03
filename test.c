@@ -5,56 +5,21 @@
 #include "telnetp.h"
 
 static void
-rec_line_feed()
+telnet_callback(int type, void *data)
 {
-    printf("\n");
-}
-
-static void
-rec_car_ret()
-{
-    printf("\r");
-}
-
-static void
-rec_bell()
-{
-}
-
-static void
-rec_backspace()
-{
-}
-
-static void
-rec_hor_tab()
-{
-}
-
-static void
-rec_vert_tab()
-{
-}
-
-static void
-rec_form_feed()
-{
-}
-
-static void
-rec_erase_line()
-{
-}
-
-static void
-rec_erase_char()
-{
-}
-
-static void
-rec_ascii(char c)
-{
-    printf("%c", c);
+    switch(type) {
+    case TC_LINE_FEED:
+        printf("\n");
+        break;
+    case TC_CARRIAGE_RETURN:
+        printf("\r");
+        break;
+    case TC_ASCII: {
+        struct ascii_callback *ac_data = data;
+        printf("%c", ac_data->c);
+        break;
+    }
+    }
 }
 
 static void
@@ -67,27 +32,9 @@ rec_echo_command(int type)
 int
 main(int argc, char *argv[])
 {
-    struct telnetp_cbs cbs = {rec_ascii,
-                              NULL,
-                              rec_line_feed,
-                              rec_car_ret,
-                              rec_bell,
-                              rec_backspace,
-                              rec_hor_tab,
-                              rec_vert_tab,
-                              rec_form_feed,
-                              rec_erase_line,
-                              rec_erase_char,
-                              NULL,
-                              NULL,
-                              NULL,
-                              NULL,
-                              NULL,
-                              NULL};
-
-    //struct telnetp *tn = telnetp_connect("oak", 23, cbs);
-    struct telnetp *tn = telnetp_connect("aardmud.org", 4000, cbs);
-    //struct telnetp *tn = telnetp_connect("realmsofdespair.com", 4000, cbs);
+    //struct telnetp *tn = telnetp_connect("oak", 23, telnet_callback);
+    //struct telnetp *tn = telnetp_connect("aardmud.org", 4000, telnet_callback);
+    struct telnetp *tn = telnetp_connect("realmsofdespair.com", 4000, telnet_callback);
 
     if(!tn) {
         printf("problem connecting\n");

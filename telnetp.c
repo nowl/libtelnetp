@@ -72,8 +72,8 @@ struct telnetp
     /* the file descripter set used for poll */
     struct pollfd fd;
 
-    /* callbacks to client */
-    struct telnetp_cbs callbacks;
+    /* callback to client */
+    void (*callback_fn)(int callback_type, void *data);
 
     /* compression */
     char mccp_compressed;
@@ -515,9 +515,8 @@ handle_subneg_end(struct telnetp *t)
     return 0;
 }
 
-#define CALLBACK_CALL(fn) {               \
-        if(t->callbacks.fn)               \
-            t->callbacks.fn();            \
+#define CALLBACK_CALL(type) {             \
+        t->callback_fn(type, NULL);       \
     }
 
 static int
@@ -532,30 +531,28 @@ process_option(struct telnetp *t)
     case NOP:
         break;
     case DM:
-        CALLBACK_CALL(data_mark_fn);
+        CALLBACK_CALL(TC_DATA_MARK);
         break;
     case BRK:
-        CALLBACK_CALL(break_fn);
+        CALLBACK_CALL(TC_BREAK);
         break;
     case IP:
-        CALLBACK_CALL(interrupt_process_fn);
+        CALLBACK_CALL(TC_INTERRUPT_PROCESS);
         break;
     case AO:  
-        CALLBACK_CALL(abort_output_fn);
+        CALLBACK_CALL(TC_ABORT_OUTPUT);
         break;
     case GA:
-        CALLBACK_CALL(go_ahead_fn);
+        CALLBACK_CALL(TC_GO_AHEAD);
         break;
     case EC:
-        /* erase character */
-        CALLBACK_CALL(erase_char_fn);
+        CALLBACK_CALL(TC_ERASE_CHAR);
         break;
     case EL:
-        /* erase line */
-        CALLBACK_CALL(erase_line_fn);
+        CALLBACK_CALL(TC_ERASE_LINE);
         break;
     case AYT:
-        CALLBACK_CALL(are_you_there_fn);
+        CALLBACK_CALL(TC_ARE_YOU_THERE);
         break;
     case SE:
         ret = handle_subneg_end(t);
@@ -593,37 +590,37 @@ process_char(struct telnetp *t, unsigned char c)
     {
         /* if in the "printable" characters then send the ascii
          * character */
-
-        if(t->callbacks.ascii_fn)
-            t->callbacks.ascii_fn(c);
+        
+        struct ascii_callback cb = {c};
+        t->callback_fn(TC_ASCII, &cb);
         return 0;
     }
 
     switch(c)
     {
     case NUL:
-        CALLBACK_CALL(null_fn);
+        CALLBACK_CALL(TC_NULL);
         break;
     case LF:
-        CALLBACK_CALL(line_feed_fn);
+        CALLBACK_CALL(TC_LINE_FEED);
         break;
     case CR:
-        CALLBACK_CALL(carriage_return_fn);
+        CALLBACK_CALL(TC_CARRIAGE_RETURN);
         break;
     case BEL:
-        CALLBACK_CALL(bell_fn);
+        CALLBACK_CALL(TC_BELL);
         break;
     case BS:
-        CALLBACK_CALL(backspace_fn);
+        CALLBACK_CALL(TC_BACKSPACE);
         break;
     case HT:
-        CALLBACK_CALL(horizontal_tab_fn);
+        CALLBACK_CALL(TC_HORIZONTAL_TAB);
         break;
     case VT:
-        CALLBACK_CALL(vertical_tab_fn);
+        CALLBACK_CALL(TC_VERTICAL_TAB);
         break;
     case FF:
-        CALLBACK_CALL(form_feed_fn);
+        CALLBACK_CALL(TC_FORM_FEED);
         break;
     case IAC:
     {
@@ -672,7 +669,7 @@ telnetp_process_incoming(struct telnetp *t)
 struct telnetp *
 telnetp_connect(char *hostname,
                 unsigned short port,
-                struct telnetp_cbs cbs)
+                void (*callback_func)(int, void *))
 {
     struct telnetp *t = malloc(sizeof(*t));
 
@@ -701,6 +698,7 @@ telnetp_connect(char *hostname,
 
     /* set up buffers */
     t->in.c = t->in.i = t->in.p = 0;
+    t->in.buffer = NULL;
     t->in.buffer = memory_grow_to_size(t->in.buffer, &t->in.c, DEFAULT_INCOMING_BUFFER_SIZE);
 
     /* turn off all options to begin with */
@@ -714,8 +712,8 @@ telnetp_connect(char *hostname,
     /* turn off compression by default */
     t->mccp_compressed = false;
 
-    /* connect callbacks */
-    t->callbacks = cbs;
+    /* connect callback */
+    t->callback_fn = callback_func;
 
     return t;
 }
