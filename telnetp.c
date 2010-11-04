@@ -249,7 +249,7 @@ get_next_byte(struct telnetp *t)
     else if(t->in.i != -1)
     {
         /* valid data to follow */
-        LOG("next char = %d", t->in.buffer[t->in.p]);
+        //LOG("next char = %d", t->in.buffer[t->in.p]);
         
         return t->in.buffer[t->in.p++];
     }
