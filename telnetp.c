@@ -64,6 +64,13 @@
 #define COMPRESS                  85 /* MCCP */
 #define COMPRESS2                 86 /* MCCP */
 
+/* ANSI escape codes */
+#define ANSI_ESC                  27
+#define ANSI_CSI                 '['
+#define ANSI_SEP                 ';'
+#define ANSI_FIN_MIN              64
+#define ANSI_FIN_MAX             126
+
 struct telnetp
 {
     /* the TCP socket */
@@ -254,6 +261,187 @@ get_next_byte(struct telnetp *t)
 
     /* shouldn't make it here */
     return -1;
+}
+
+#define DEFAULT_ANSI_BUFFER_SIZE     4
+
+static char		*ansi_esc_buffer   = NULL;
+static int		 ansi_esc_buffer_i = 0;
+static size_t	 ansi_esc_buffer_c = 0;
+
+static int
+gather_ansi(struct telnetp *t)
+{
+	/* This function should read until we reach an ansi escape code
+	 * ending character. All the intermediate (and ending) bytes
+	 * should be saved to the static buffer for later processing. */
+
+	ansi_esc_buffer_i = 0;
+
+	/* initialize buffer */
+	if( !ansi_esc_buffer )
+		ansi_esc_buffer = memory_grow_to_size(ansi_esc_buffer,
+											  &ansi_esc_buffer_c,
+											  DEFAULT_ANSI_BUFFER_SIZE);
+	
+    short ret = get_next_byte(t);
+    if(ret == -1) return -1;
+    
+    ansi_esc_buffer[ansi_esc_buffer_i++] = ret;
+
+	int done = false;
+
+	while(!done)
+    {
+		ret = get_next_byte(t);
+		if(ret == -1) return -1;
+		
+		/* double buffer if we've hit max */
+		if(ansi_esc_buffer_i == ansi_esc_buffer_c)
+			ansi_esc_buffer = memory_grow_to_size(ansi_esc_buffer,
+												  &ansi_esc_buffer_c,
+												  ansi_esc_buffer_c * 2);
+
+		ansi_esc_buffer[ansi_esc_buffer_i++] = ret;
+		
+		if(ret >= ANSI_FIN_MIN && ret <= ANSI_FIN_MAX)
+			done = true;
+	}
+   
+    return 0;
+}
+
+static void
+process_ansi_sgr(struct telnetp *t, int num_opts)
+{
+    /* skip the '[' character */
+    int pos = 1;
+
+    /* process each request in order */
+   
+    int i;
+    for(i=0; i<num_opts; i++)
+    {
+        int arg;
+        if( sscanf(ansi_esc_buffer+pos, "%d", &arg) != 1 )
+            return;
+
+        struct ansi_callback_1arg cb = {arg};
+        t->callback_fn(TC_ANSI_SGR, &cb);
+
+        /* skip to next arg */
+        while(ansi_esc_buffer[pos++] != ANSI_SEP) {}           
+    }
+}
+
+static
+int process_ansi(struct telnetp *t)
+{
+	if(ansi_esc_buffer[0] != ANSI_CSI)
+		return -1;
+    
+	int type = ansi_esc_buffer[ansi_esc_buffer_i-1];
+	
+	/* count ';' */
+	int sep_count = 0;
+	int i;
+	for(i=0; i<ansi_esc_buffer_i; i++)
+		if(ansi_esc_buffer[i] == ANSI_SEP)
+			sep_count++;
+	
+	switch(type) {
+	case 's':
+        t->callback_fn(TC_ANSI_SAVE_CUR_POS, NULL);
+        break;
+	case 'u':
+        t->callback_fn(TC_ANSI_REST_CUR_POS, NULL);
+        break;
+	case 'A':
+	case 'B':
+	case 'C':
+	case 'D':
+	case 'E':
+	case 'F':
+	case 'G':
+	case 'J':
+	case 'K':
+	case 'S':
+	case 'T':
+	case 'n':
+    case 'l':
+    case 'h':
+	{
+        /* one param options */
+
+		int arg1;
+		if(sep_count != 0) return -1;
+		if( sscanf(ansi_esc_buffer, "[%d", &arg1) != 1 ) return -1;
+
+        struct ansi_callback_1arg cb = {arg1};
+
+        int callback_type;
+        switch(type) {
+        case 'A': callback_type = TC_ANSI_CURSOR_UP; break;
+        case 'B': callback_type = TC_ANSI_CURSOR_DOWN; break;
+        case 'C': callback_type = TC_ANSI_CURSOR_FORWARD; break;
+        case 'D': callback_type = TC_ANSI_CURSOR_BACK; break;
+        case 'E': callback_type = TC_ANSI_CURSOR_NEXT_LINE; break;
+        case 'F': callback_type = TC_ANSI_CURSOR_PREV_LINE; break;
+        case 'G': callback_type = TC_ANSI_CURSOR_HORZ_ABS; break;
+        case 'J': callback_type = TC_ANSI_ERASE_DATA; break;
+        case 'K': callback_type = TC_ANSI_ERASE_IN_LINE; break;
+        case 'S': callback_type = TC_ANSI_SCROLL_UP; break;
+        case 'T': callback_type = TC_ANSI_SCROLL_DOWN; break;
+        case 'n': callback_type = TC_ANSI_DEV_STAT_REP; break;
+        case 'l': callback_type = TC_ANSI_HIDE_CURS; break;
+        case 'h': callback_type = TC_ANSI_SHOW_CURS; break;
+        };
+        
+        t->callback_fn(callback_type, &cb);
+        break;
+	}
+    case 'H':
+    case 'f':
+	{
+        /* two param options */
+
+		int arg1, arg2;
+		if(sep_count != 0) return -1;
+		if( sscanf(ansi_esc_buffer, "[%d;%d", &arg1, &arg2) != 2 ) return -1;
+
+        struct ansi_callback_2arg cb = {arg1, arg2};
+
+        int callback_type;
+        switch(type) {
+        case 'H': callback_type = TC_ANSI_CURSOR_POS; break;
+        case 'f': callback_type = TC_ANSI_HOR_AND_VER_POS; break;
+        };
+        
+        t->callback_fn(callback_type, &cb);
+        break;
+	}
+    case 'm':
+        process_ansi_sgr(t, sep_count+1);
+        break;
+    
+    default:
+        LOG("Unknown ANSI escape code sequence: %d", type);
+        return -1;
+	};
+    
+    return 0;
+}
+
+static int
+process_ansi_escape(struct telnetp *t)
+{
+	if( gather_ansi(t) == -1)
+		return -1;
+	
+	if( process_ansi(t) == -1)
+		return -1;
+
+    return 0;
 }
 
 static int
@@ -630,6 +818,12 @@ process_char(struct telnetp *t, unsigned char c)
         
         break;
     }
+	case ANSI_ESC:
+	{
+		/* process ansi escape code */
+		process_ansi_escape(t);
+        break;
+	}
     default:
         LOG("unknown character encountered: %d", c);
         
