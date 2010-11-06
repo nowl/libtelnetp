@@ -26,7 +26,8 @@
 
 /* implementation of RFC 854 */
 
-#define DEFAULT_INCOMING_BUFFER_SIZE          4096
+#define DEFAULT_RECV_BUFFER_SIZE              4096
+#define DEFAULT_INCOMING_BUFFER_SIZE          (DEFAULT_RECV_BUFFER_SIZE * 100) /* probably overkill */
 
 /* printer commands */
 
@@ -136,7 +137,7 @@ collect_incoming(struct telnetp *t)
         {
             /* compressed stream, first decompress, and then copy into
              * in buffer */
-            ssize_t len = recv(t->tcp_socket, zlib_buffer, zlib_buffer_c, 0);
+            ssize_t len = recv(t->tcp_socket, zlib_buffer, DEFAULT_RECV_BUFFER_SIZE, 0);
             
             /* initialize zstream properties */
             t->mccp_zstream.next_in = zlib_buffer;
@@ -145,10 +146,15 @@ collect_incoming(struct telnetp *t)
             t->mccp_zstream.avail_out = t->in.c;
             t->mccp_zstream.total_out = 0;
 
+            int loops = 0;
             int ret2 = Z_OK;
-            do {
+            do {                
+                if(loops > 10) break;
+
                 if(ret2 == Z_BUF_ERROR)
                 {
+                    /* code path untested.. */
+
                     t->in.buffer = memory_grow_to_size(t->in.buffer, &t->in.c, t->in.c * 2);
                     t->mccp_zstream.next_in = zlib_buffer;
                     t->mccp_zstream.avail_in = len;
@@ -156,16 +162,22 @@ collect_incoming(struct telnetp *t)
                     t->mccp_zstream.avail_out = t->in.c;
                     t->mccp_zstream.total_out = 0;
                 }
+
                 ret2 = inflate(&t->mccp_zstream, Z_SYNC_FLUSH);
+                loops++;
             } while(ret2 == Z_BUF_ERROR);
     
             /* one final check */
-            if(ret2 != Z_OK) LOG("fatal error in input stream!! got %d", ret2);
-            
+            if(ret2 != Z_OK) {
+                /* error, just drop this data */
+                LOG("fatal error in input stream!! loops %d, type %d, error %s", loops, ret2, t->mccp_zstream.msg);                
+                t->in.i = 0;
+            }
+
             t->in.i = t->mccp_zstream.total_out;
         } else {
             /* regular uncompressed stream */
-            ssize_t len = recv(t->tcp_socket, t->in.buffer, t->in.c, 0);
+            ssize_t len = recv(t->tcp_socket, t->in.buffer, DEFAULT_RECV_BUFFER_SIZE, 0);
             
             t->in.i = len;
         }
@@ -183,8 +195,8 @@ uncompress_remaining(struct telnetp *t)
     if(zlib_buffer_c == 0)
     {
         /* initialize buffer if needed */
-        zlib_buffer = malloc(sizeof(*zlib_buffer) * DEFAULT_INCOMING_BUFFER_SIZE);
-        zlib_buffer_c = DEFAULT_INCOMING_BUFFER_SIZE;                
+        zlib_buffer = malloc(sizeof(*zlib_buffer) * DEFAULT_RECV_BUFFER_SIZE);
+        zlib_buffer_c = DEFAULT_RECV_BUFFER_SIZE;                
     }
 
     /* initialize zstream properties */
@@ -312,6 +324,12 @@ gather_ansi(struct telnetp *t)
 }
 
 static void
+process_ansi_pcode(struct telnetp *t, int num_opts)
+{
+    LOG("skipping ansi pcode processing\n");
+}
+
+static void
 process_ansi_sgr(struct telnetp *t, int num_opts)
 {
     /* skip the '[' character */
@@ -422,6 +440,9 @@ int process_ansi(struct telnetp *t)
 	}
     case 'm':
         process_ansi_sgr(t, sep_count+1);
+        break;
+    case 'p':
+        process_ansi_pcode(t, sep_count+1);
         break;
     
     default:

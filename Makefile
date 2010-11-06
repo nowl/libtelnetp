@@ -5,6 +5,7 @@ LDFLAGS =
 LIBS = -lz
 
 SRCS = telnetp.c \
+       ansi_p_codes.c \
 	   utils.c
 
 OBJS = $(SRCS:.c=.o)

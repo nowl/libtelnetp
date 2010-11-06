@@ -1,6 +1,8 @@
 #ifndef __TELNETP_H__
 #define __TELNETP_H__
 
+#include "ansi_p_codes.h"
+
 enum {
     TO_COMPRESS,
     TO_COMPRESS2,
