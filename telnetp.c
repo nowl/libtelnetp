@@ -14,7 +14,6 @@
 #include <zlib.h>
 
 #include "telnetp.h"
-#include "utils.h"
 
 #define _DEBUG
 

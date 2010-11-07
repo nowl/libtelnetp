@@ -1,6 +1,7 @@
 #ifndef __TELNETP_H__
 #define __TELNETP_H__
 
+#include "utils.h"
 #include "ansi_p_codes.h"
 
 enum {
