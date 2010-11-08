@@ -154,7 +154,7 @@ collect_incoming(struct telnetp *t)
                 {
                     /* code path untested.. */
 
-                    t->in.buffer = memory_grow_to_size(t->in.buffer, &t->in.c, t->in.c * 2);
+                    t->in.buffer = memory_grow_to_size(t->in.buffer, sizeof(*t->in.buffer), &t->in.c, t->in.c * 2);
                     t->mccp_zstream.next_in = zlib_buffer;
                     t->mccp_zstream.avail_in = len;
                     t->mccp_zstream.next_out = t->in.buffer;
@@ -222,7 +222,7 @@ uncompress_remaining(struct telnetp *t)
     do {
         if(ret2 == Z_BUF_ERROR)
         {
-            t->in.buffer = memory_grow_to_size(t->in.buffer, &t->in.c, t->in.c * 2);
+            t->in.buffer = memory_grow_to_size(t->in.buffer, sizeof(*t->in.buffer), &t->in.c, t->in.c * 2);
             t->mccp_zstream.next_in = zlib_buffer;
             t->mccp_zstream.avail_in = remaining;
             t->mccp_zstream.next_out = t->in.buffer;
@@ -292,6 +292,7 @@ gather_ansi(struct telnetp *t)
 	/* initialize buffer */
 	if( !ansi_esc_buffer )
 		ansi_esc_buffer = memory_grow_to_size(ansi_esc_buffer,
+                                              sizeof(*ansi_esc_buffer),
 											  &ansi_esc_buffer_c,
 											  DEFAULT_ANSI_BUFFER_SIZE);
 	
@@ -310,6 +311,7 @@ gather_ansi(struct telnetp *t)
 		/* double buffer if we've hit max */
 		if(ansi_esc_buffer_i == ansi_esc_buffer_c)
 			ansi_esc_buffer = memory_grow_to_size(ansi_esc_buffer,
+                                                  sizeof(*ansi_esc_buffer),
 												  &ansi_esc_buffer_c,
 												  ansi_esc_buffer_c * 2);
 
@@ -913,7 +915,7 @@ telnetp_connect(char *hostname,
     /* set up buffers */
     t->in.c = t->in.i = t->in.p = 0;
     t->in.buffer = NULL;
-    t->in.buffer = memory_grow_to_size(t->in.buffer, &t->in.c, DEFAULT_INCOMING_BUFFER_SIZE);
+    t->in.buffer = memory_grow_to_size(t->in.buffer, sizeof(*t->in.buffer), &t->in.c, DEFAULT_INCOMING_BUFFER_SIZE);
 
     /* turn off all options to begin with */
     int i;
@@ -978,7 +980,7 @@ int
 telnetp_send_line(struct telnetp *t, char *data, unsigned int len)
 {
     /* attach line feed and carriage return */
-    out_buf = memory_grow_to_size(out_buf, &out_buf_c, len+2);
+    out_buf = memory_grow_to_size(out_buf, sizeof(*out_buf), &out_buf_c, len+2);
     memcpy(out_buf, data, len);
     out_buf[len] = LF;
     out_buf[len+1] = CR;
