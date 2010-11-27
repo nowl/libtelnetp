@@ -947,6 +947,8 @@ telnetp_enable_option(struct telnetp *t, unsigned int type, char enabled, void *
 void
 telnetp_close(struct telnetp *t)
 {
+    shutdown(t->tcp_socket, SHUT_RDWR);
+
     /* close tcp socket */
     if( close(t->tcp_socket) == -1 )
         LOG("socket close problem: %d", errno);
