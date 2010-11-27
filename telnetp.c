@@ -859,8 +859,12 @@ process_char(struct telnetp *t, unsigned char c)
 static void
 process_buffer(struct telnetp *t)
 {
+    int more = 0;
+
     while(t->in.p < t->in.i)
     {
+        more = 1;
+        
         /* still data remaining to be processed in this cycle */
         
         short ret = get_next_byte(t);
@@ -869,6 +873,9 @@ process_buffer(struct telnetp *t)
         if( process_char(t, (unsigned char)ret) == -1 )
             return;
     }
+
+    if(more)
+        CALLBACK_CALL(TC_LINE_FEED);
 }
 
 void
@@ -877,7 +884,7 @@ telnetp_process_incoming(struct telnetp *t)
     /* *buffer will be filled with the most recent printer data from
      * the connection */
     collect_incoming(t);
-
+    
     /* process the incoming buffer */
     process_buffer(t);
 }
