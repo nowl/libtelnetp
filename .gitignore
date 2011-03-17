@@ -1,0 +1,11 @@
+*~
+autom4te.cache
+*.m4
+config.h
+config.log
+config.status
+libtool
+.deps
+.libs
+*.o
+*.lo
